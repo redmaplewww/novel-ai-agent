@@ -1,0 +1,44 @@
+# 小说AI 配置文件 —— 复制为 config.yaml 后按需修改
+
+# ===== LLM 后端 =====
+# backend: 用哪个后端
+#   - openai   : 任何 OpenAI 兼容 API（OpenAI / DeepSeek / 硅基流动 / OpenRouter / 本地 vLLM 等）
+#   - ollama   : 本地 Ollama
+backend: openai
+
+# ----- OpenAI 兼容 -----
+openai:
+  # api_key 从环境变量 NOVEL_API_KEY 读取（也可写死在这里，但不推荐）
+  api_key: ${NOVEL_API_KEY}
+  base_url: https://api.deepseek.com/v1   # 改成你的服务商
+  model: deepseek-chat
+  # 可选的"长写"模型（更强更慢），写作章节时用；留空则同 model
+  writer_model:
+  temperature: 0.85
+  max_tokens: 4096
+  timeout: 120
+
+# ----- Ollama 本地 -----
+ollama:
+  host: http://127.0.0.1:11434
+  model: qwen2.5:7b-instruct
+  writer_model:
+  temperature: 0.85
+  num_ctx: 16384       # 上下文窗口
+  timeout: 600
+
+# ===== 写作默认参数 =====
+writing:
+  # 每章目标字数（中文字符数）
+  chapter_words: 2500
+  # 喂给写作 agent 的"近期章节摘要"条数
+  recent_summary_count: 3
+  # 喂给写作 agent 的"近期原文"条数（取每章末尾 N 字）
+  recent_text_chars: 600
+  # 单章生成失败时的重试次数
+  max_retries: 2
+  # 是否在写完后自动跑一致性检查
+  auto_review: true
+  # 是否在写完后自动提取状态变化（人物状态/伏笔/持有物/承诺/既定事实）
+  # 这是防止长篇小说"写着写着崩坏"的关键
+  auto_track: true
