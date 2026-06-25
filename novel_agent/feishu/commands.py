@@ -81,6 +81,14 @@ class CommandRouter:
         self.config = config
         self.default_project: str = config.feishu.get("default_project", "") or "demo"
         self.max_chars: int = int(config.feishu.get("max_msg_chars", 2800))
+        self._backend = None  # 延迟构建，对话时用到才建
+
+    def _get_backend(self):
+        if self._backend is None:
+            from ..llm import build_backend
+
+            self._backend = build_backend(self.config)
+        return self._backend
 
     # ============ 入口 ============
     def handle(self, raw_text: str) -> CommandResult:
@@ -92,10 +100,8 @@ class CommandRouter:
         # 解析命令：支持 #cmd 或 /cmd 开头
         m = re.match(r"^[#/]\s*([^\s]+)\s*(.*)$", text, re.DOTALL)
         if not m:
-            # 没有命令前缀，提示用法
-            return CommandResult(
-                text=f"未识别的命令。消息请以 # 开头。\n\n发送 #帮助 查看可用命令。"
-            )
+            # 无命令前缀 → 自由对话模式（写作教练）
+            return self._chat(text)
         cmd = m.group(1).lower()
         rest = m.group(2).strip()
 
@@ -411,3 +417,65 @@ class CommandRouter:
         return CommandResult(
             text=f"✓ 已备份：{p.name}（{size_kb} KB）", project=project
         )
+
+    # ============ 自由对话（写作教练模式）============
+    def _chat(self, text: str) -> CommandResult:
+        """无 # 命令时进入自由对话：以写作教练身份帮用户理清思路。"""
+        from ..llm import Message
+
+        project = self.default_project
+        ctx = self._build_chat_context(project)
+        backend = self._get_backend()
+        messages = [
+            Message(
+                "system",
+                f"""你是一位资深的小说写作教练与创意伙伴，正在协助一位作者创作小说。
+
+你的职责：
+- 帮作者理清思路、拆解问题、激发灵感
+- 分析情节架构、人物动机、节奏问题
+- 对作者提出的任何写作相关问题给出具体、可操作的建议
+- 如果作者描述了一个情节点子，帮他延展、找漏洞、提供变体方向
+- 保持友好、热情、鼓励的语气，像一个有经验的编辑朋友
+- 回答要简洁精炼（控制在 600 字以内），但要有实质内容
+
+{ctx}""",
+            ),
+            Message("user", text),
+        ]
+        try:
+            reply = backend.chat(messages, temperature=0.85, max_tokens=1200)
+        except Exception as e:
+            reply = f"抱歉，调用模型失败：{e}"
+        return CommandResult(
+            text=self._truncate(reply),
+            project=project,
+        )
+
+    def _build_chat_context(self, project_name: str) -> str:
+        """构建对话用的项目上下文，让 LLM 知道当前小说是什么。"""
+        try:
+            agent = self._open(project_name)
+            parts: list[str] = []
+            p = agent.project
+            parts.append(f"【当前项目】《{p.title or p.name}》")
+            if p.genre:
+                parts.append(f"题材：{p.genre}")
+            if p.logline:
+                parts.append(f"一句话：{p.logline}")
+            if p.synopsis:
+                parts.append(f"简介：{p.synopsis[:300]}")
+            if p.worldview:
+                parts.append(f"世界观：{p.worldview[:200]}")
+            chars = [c.name for c in agent.bible.characters]
+            if chars:
+                parts.append(f"主要人物：{'、'.join(chars)}")
+            # 大纲进度
+            all_ch = agent.outline.all_chapters()
+            done = [c.chapter_id for c in all_ch if c.status.value not in ("pending",)]
+            if done:
+                parts.append(f"已完成章节：{'、'.join(done)}（共{len(done)}章）")
+            parts.append(f"待写章节：{len(all_ch) - len(done)}章")
+            return "你知道当前正在创作的小说信息如下：\n\n" + "\n".join(parts)
+        except Exception:
+            return "（当前项目信息暂不可用）"
